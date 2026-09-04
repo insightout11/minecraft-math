@@ -1,6 +1,7 @@
 {
   "name": "Minecraft Math",
-  "short_name": "MCMath",
+  "short_name": "Minecraft Math",
+  "id": "/",
   "description": "Jackson's blocky maths adventure: battle mobs, earn loot, master times tables.",
   "start_url": "/",
   "scope": "/",
