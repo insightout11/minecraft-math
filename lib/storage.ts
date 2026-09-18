@@ -1,8 +1,9 @@
-import { defaultCurriculum, SaveData } from "./types";
+import { defaultCurriculum, defaultHardcoreState, SaveData } from "./types";
+import { sanitizeHardcore } from "./hardcore";
 import { ITEMS, WORLDS, MOBS } from "./game-data";
 
 const KEY = "minecraft-math-save-v1";
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 const IDB_DB = "minecraft-math";
 const IDB_STORE = "kv";
 const IDB_KEY = "save";
@@ -42,7 +43,8 @@ export function defaultSave(): SaveData {
     curriculum: defaultCurriculum(),
     consumables: { apples: 0, totem: false },
     celebrated: [],
-    updatedAt: now
+    updatedAt: now,
+    hardcore: defaultHardcoreState()
   };
 }
 
@@ -127,6 +129,8 @@ export function migrate(raw: unknown): SaveData {
     },
     celebrated: strArr(o.celebrated),
     updatedAt: num(o.updatedAt, 0),
+    // Hardcore is fully isolated: old saves simply gain an empty hardcore block.
+    hardcore: sanitizeHardcore((o as Record<string, unknown>).hardcore),
     version: SAVE_VERSION
   };
 }

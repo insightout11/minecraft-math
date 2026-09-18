@@ -117,3 +117,24 @@ body {
 .text-outline-sm {
   text-shadow: 0 2px 0 rgba(0,0,0,0.6);
 }
+
+/* ---------- HARDCORE MODE identity (intense but never scary) ---------- */
+.hc-frame {
+  border: 4px solid #7f1d1d;
+  box-shadow: 0 0 0 2px #ef4444, 0 0 28px rgba(239, 68, 68, 0.45), 0 8px 0 rgba(0,0,0,0.35);
+}
+@keyframes lowhp-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.12); filter: brightness(1.5); }
+}
+.anim-lowhp { animation: lowhp-pulse 0.9s ease-in-out infinite; }
+@keyframes hc-vignette-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.55; }
+}
+.anim-hc-vignette { animation: hc-vignette-pulse 1.1s ease-in-out infinite; }
+@keyframes enrage-flash {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.6) saturate(1.6); }
+}
+.anim-enrage-flash { animation: enrage-flash 0.7s ease-in-out infinite; }

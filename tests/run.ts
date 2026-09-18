@@ -1,5 +1,12 @@
 import { generateQuestion, answerModeFor, resolveMixed, CurriculumOpts } from "../lib/questions";
 import { calcStrike, calcGuard, mobAttackHearts, rollLootDrops, isUpgrade } from "../lib/combat";
+import {
+  HC_MAX_HEARTS, HC_ATTACK, ENRAGE_MS, isQuestionEnraged, hcMobAttack,
+  scoreCorrect, runAccuracy, finalizeScore, SCORE_MOB, SCORE_BOSS, SCORE_WORLD,
+  BOSS_GATE_ACC, gatePenalty, HC_TROPHIES, defaultRun, grantTrophy,
+  rollHardcoreDrops, rollHardcoreApple, updateRecords, sanitizeHardcore
+} from "../lib/hardcore";
+import { MOBS } from "../lib/game-data";
 import { migrate, validateImport, exportSave, defaultSave, loadSave, persist } from "../lib/storage";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -129,7 +136,8 @@ ok(m1.level === 12 && m1.coins === 12450, "v1 progress preserved", { l: m1.level
 ok(!m1.inventory.includes("bogus_item") && m1.inventory.includes("wooden_sword"), "unknown items filtered, sword kept");
 ok(!m1.unlockedWorlds.includes("nope") && m1.unlockedWorlds.includes("green"), "unknown worlds filtered");
 ok(m1.curriculum.ops.div === false, "migrated curriculum defaults div OFF");
-ok(m1.version === 3, "migrated to v3");
+ok(m1.version === 4, "migrated to v4");
+ok(m1.hardcore.run === null && m1.hardcore.records.attempts === 0, "old saves gain empty hardcore block");
 const m2 = migrate({ utter: "garbage" });
 ok(m2.level === 1 && m2.inventory.includes("wooden_sword"), "garbage migrates to fresh (never crashes)");
 const m3 = migrate(null);
@@ -161,7 +169,7 @@ const store = new Map<string, string>();
   ok(back.coins === 123 && back.level === 4, "persist/load round-trip keeps progress", { c: back.coins, l: back.level });
   ok(back.unlockedWorlds.includes("sandy") && back.curriculum.ops.div === true, "round-trip keeps worlds + curriculum");
   ok(back.consumables.apples === 2 && back.consumables.totem === true, "round-trip keeps consumables");
-  ok(back.version === 3 && back.updatedAt > 0, "round-trip stamps version + time");
+  ok(back.version === 4 && back.updatedAt > 0, "round-trip stamps version + time");
 }
 
 // ---------- 5. PWA static checks ----------
@@ -186,6 +194,89 @@ const store = new Map<string, string>();
   for (const needle of ["manifest.webmanifest", "apple-touch-icon", "serviceWorker", "viewportFit", "/sw.js"]) {
     ok(layout.includes(needle), `layout wires ${needle}`);
   }
+}
+
+// ---------- 6. Hardcore Mode ----------
+{
+  ok(HC_MAX_HEARTS === 5, "hardcore starts with 5 hearts");
+  // every mob has a tuned hardcore attack inside spec ranges
+  for (const m of MOBS) {
+    const a = HC_ATTACK[m.id];
+    ok(typeof a === "number" && a >= 1 && a <= 3, `hc attack tuned for ${m.id}`, a);
+  }
+  // normal mobs 1-2, dangerous 2-3, bosses (with +1) max 4
+  ok(hcMobAttack("zombie", 1, {}) === 1, "hc zombie hits 1");
+  ok(hcMobAttack("grub", 3, {}) === 2, "hc creeper hits 2 (fresh run survives one mistake)");
+  ok(hcMobAttack("warden", 3, { boss: true }) === 4, "hc warden boss hits 4");
+  ok(hcMobAttack("dragon", 3, { boss: true, enraged: true, dragonPhase: 3, questionEnraged: true }) === 4, "hc damage capped at 4");
+  ok(hcMobAttack("skeleton", 1, { boss: true }) === 3, "hc skeleton boss 2+1");
+  // enrage timer: generous, never auto-fails (pure threshold only)
+  ok(ENRAGE_MS.normal === 8000 && ENRAGE_MS.intense === 5000, "enrage thresholds");
+  ok(isQuestionEnraged(7999, "normal") === false && isQuestionEnraged(8000, "normal") === true, "normal enrage at 8s");
+  ok(isQuestionEnraged(999999, "off") === false, "timer off never enrages");
+  // scoring rewards accuracy, never speed
+  ok(scoreCorrect(1) === 100, "base correct = 100");
+  ok(scoreCorrect(5) === 140 && scoreCorrect(30) === 200, "streak bonus capped", [scoreCorrect(5), scoreCorrect(30)]);
+  ok(finalizeScore(1000, 1, 0, false) === 1500, "perfect accuracy multiplies 1.5x");
+  ok(finalizeScore(1000, 0.5, 0, false) === 1000, "50% accuracy multiplies 1.0x");
+  ok(finalizeScore(1000, 1, 3, true) === 2400, "completion adds heart bonus", finalizeScore(1000, 1, 3, true));
+  ok(finalizeScore(1000, 0, 5, true) === Math.round(2000 * 0.5), "0% accuracy halves even a win");
+  ok(SCORE_MOB === 250 && SCORE_BOSS === 1000 && SCORE_WORLD === 1500, "win bonuses");
+  // accuracy gates are soft: HP penalty only, run always continues
+  const g1 = gatePenalty("deepdark", 0.7, 20);
+  ok(g1.gated === true && g1.hpMult === 1.25 && !!g1.note, "low accuracy gates late boss (+25% HP, note shown)", g1);
+  ok(gatePenalty("deepdark", 0.9, 20).gated === false, "85%+ passes the gate");
+  ok(gatePenalty("green", 0.1, 50).gated === false, "early worlds never gated");
+  ok(gatePenalty("end", 0.1, 3).gated === false, "gate needs 5+ answers first");
+  ok(BOSS_GATE_ACC === 0.85, "gate threshold is 85%");
+  // records + trophies
+  const r0 = defaultRun();
+  ok(r0.hearts === 5 && r0.apples === 1 && r0.inventory.includes("wooden_sword") && r0.battle === null, "fresh run kit");
+  ok(grantTrophy(r0, "hc_first_blood") === true && grantTrophy(r0, "hc_first_blood") === false, "trophies granted once");
+  ok(HC_TROPHIES.length === 9, "nine hardcore trophies defined");
+  const rec0 = sanitizeHardcore(undefined).records;
+  const sum = { completed: false, worldIdx: 3, bosses: 4, score: 5000, answered: 50, correct: 45, bestStreak: 9, playMs: 600000, trophiesEarned: ["hc_first_blood"] };
+  const { records: rec1, newBests } = updateRecords(rec0, sum);
+  ok(rec1.bestScore === 5000 && rec1.mostBosses === 4 && rec1.bestWorldIdx === 3 && rec1.longestStreak === 9, "records updated", rec1);
+  ok(Math.abs(rec1.bestAccuracy - 0.9) < 1e-9 && rec1.bestAccuracyN === 50, "best accuracy tracked");
+  ok(rec1.trophies.includes("hc_first_blood") && newBests.length >= 4, "trophies kept + bests reported", newBests);
+  ok(rec1.completions === 0 && rec1.fastestMs === null, "death is not a completion");
+  const { records: rec2 } = updateRecords(rec1, { ...sum, completed: true, score: 100, playMs: 300000, trophiesEarned: [] });
+  ok(rec2.completions === 1 && rec2.fastestMs === 300000, "completion counted + fastest time");
+  const { records: rec3 } = updateRecords(rec2, { ...sum, completed: true, score: 50, playMs: 900000, trophiesEarned: [] });
+  ok(rec3.fastestMs === 300000 && rec3.completions === 2, "slower win keeps fastest");
+  const low = updateRecords(rec1, { completed: false, worldIdx: 0, bosses: 0, score: 10, answered: 4, correct: 2, bestStreak: 1, playMs: 1000, trophiesEarned: [] });
+  ok(low.records.bestScore === 5000 && low.newBests.length === 0, "weak run beats nothing");
+  // run accuracy helper
+  ok(runAccuracy({ answered: 0, correct: 0 }) === 1 && runAccuracy({ answered: 10, correct: 7 }) === 0.7, "run accuracy");
+  // hardcore loot stays scarce
+  let apples = 0;
+  for (let i = 0; i < 500; i++) if (rollHardcoreApple({ boss: false, applesOwned: 0, roll: () => ((i * 104729) % 1000) / 1000 })) apples++;
+  ok(apples > 0 && apples < 150, "apples scarce but findable", apples);
+  ok(rollHardcoreApple({ boss: false, applesOwned: 3, roll: () => 0 }) === false, "apple cap respected");
+  let totems = 0;
+  for (let i = 0; i < 600; i++) {
+    const d = rollHardcoreDrops(["iron_sword"], { boss: true, roll: () => ((i * 104729) % 1000) / 1000 });
+    if (d.includes("totem_undying")) totems++;
+  }
+  ok(totems > 0 && totems < 90, "totem very rare, boss-only", totems);
+  const nd = rollHardcoreDrops(["wooden_sword"], { boss: false, roll: seq(5) });
+  ok(nd.includes("wooden_sword") && nd.length <= 3, "hc pool drop guaranteed");
+  // isolation: hardcore helpers never touch normal-mode fields
+  const snap = defaultSave();
+  const before = JSON.stringify({ ...snap, hardcore: undefined });
+  sanitizeHardcore({ run: { worldIdx: 99, hearts: -5, inventory: ["bogus"], equipped: {} }, records: { bestScore: 10 } });
+  updateRecords(sanitizeHardcore(undefined).records, sum);
+  ok(JSON.stringify({ ...snap, hardcore: undefined }) === before, "normal save untouched by hardcore ops");
+  // migration v3 -> v4: progress preserved, hardcore block added
+  const v3 = { ...defaultSave(), version: 3, level: 7, coins: 111, inventory: ["iron_sword"], hardcore: undefined };
+  const m4 = migrate(v3);
+  ok(m4.version === 4 && m4.level === 7 && m4.coins === 111 && m4.inventory.includes("iron_sword"), "v3 progress migrates to v4");
+  ok(m4.hardcore.run === null && m4.hardcore.records.attempts === 0 && m4.hardcore.timerPressure === "normal", "migrated save gains empty hardcore block");
+  const kept = migrate({ ...defaultSave(), version: 4, hardcore: { run: null, records: { ...sanitizeHardcore(undefined).records, bestScore: 777 }, timerPressure: "intense" } });
+  ok(kept.hardcore.records.bestScore === 777 && kept.hardcore.timerPressure === "intense", "v4 hardcore records survive migration");
+  const corrupt = migrate({ ...defaultSave(), version: 4, hardcore: { run: { worldIdx: 99, hearts: 0 }, records: { bestScore: -5 } } });
+  ok(corrupt.hardcore.run === null && corrupt.hardcore.records.bestScore === 0, "corrupt run dropped, records kept safe");
 }
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);

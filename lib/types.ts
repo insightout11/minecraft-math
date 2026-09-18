@@ -123,4 +123,85 @@ export interface SaveData {
   consumables: { apples: number; totem: boolean };
   celebrated: string[];
   updatedAt: number;
+  hardcore: HardcoreState;
+}
+
+export type HardcoreTimerPressure = "off" | "normal" | "intense";
+
+/** Mid-battle checkpoint so an interrupted run resumes safely (never a death). */
+export interface HardcoreBattleSnapshot {
+  worldIdx: number;
+  step: number; // 0..2 mission, 3 = boss
+  mobHp: number;
+  mobMax: number;
+  hearts: number;
+  qNum: number;
+  qTotal: number;
+}
+
+/** One Hardcore attempt. Lives entirely inside save.hardcore.run. */
+export interface HardcoreRun {
+  startedAt: number;
+  playMs: number; // accumulated thinking time (pause-safe run clock)
+  worldIdx: number;
+  step: number; // 0..2 mission, 3 = boss
+  hearts: number;
+  score: number;
+  answered: number;
+  correct: number;
+  wrong: number;
+  streak: number;
+  bestStreak: number;
+  bosses: number;
+  bossesDefeated: string[];
+  mobsWon: number;
+  inventory: string[];
+  equipped: { weapon: string | null; armor: string | null; pet: string | null; hat: string | null };
+  apples: number;
+  totem: boolean;
+  trophiesEarned: string[];
+  worldsCompleted: string[];
+  worldAnswered: number;
+  worldCorrect: number;
+  worldWrong: number;
+  bossDamageTaken: number;
+  battle: HardcoreBattleSnapshot | null;
+}
+
+export interface HardcoreRecords {
+  attempts: number;
+  completions: number;
+  bestWorldIdx: number; // furthest world reached (-1 = never started)
+  mostBosses: number;
+  bestScore: number;
+  bestAccuracy: number; // 0..1, only runs with >=10 answers
+  bestAccuracyN: number;
+  longestStreak: number;
+  fastestMs: number | null; // best completed run time
+  trophies: string[]; // permanent hardcore trophy ids
+}
+
+export interface HardcoreState {
+  run: HardcoreRun | null;
+  records: HardcoreRecords;
+  timerPressure: HardcoreTimerPressure;
+}
+
+export function defaultHardcoreState(): HardcoreState {
+  return {
+    run: null,
+    records: {
+      attempts: 0,
+      completions: 0,
+      bestWorldIdx: -1,
+      mostBosses: 0,
+      bestScore: 0,
+      bestAccuracy: 0,
+      bestAccuracyN: 0,
+      longestStreak: 0,
+      fastestMs: null,
+      trophies: []
+    },
+    timerPressure: "normal"
+  };
 }
